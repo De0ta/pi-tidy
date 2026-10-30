@@ -18,7 +18,29 @@ initTheme("dark");
 const theme = (globalThis as any)[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
 
-async function screen(width: number, count: number, followEnd = false, preview?: number) {
+/** Disabled Quiet still delegates via a new Container, state and last component. */
+function wrappedDefinition() {
+  const stock = createEditToolDefinition(process.cwd());
+  return { ...stock,
+    renderCall(args: any, theme: any, context: any) {
+      const s = context.state;
+      s.inner ??= {};
+      s.root ??= new Container();
+      s.root.clear();
+      s.call = stock.renderCall!(args, theme, { ...context, state: s.inner, lastComponent: s.call });
+      s.root.addChild(s.call);
+      return s.root;
+    },
+    renderResult(result: any, options: any, theme: any, context: any) {
+      const s = context.state;
+      s.result = stock.renderResult!(result, options, theme, { ...context, state: s.inner, lastComponent: s.result });
+      s.root.addChild(s.result);
+      return new Container();
+    },
+  };
+}
+
+async function screen(width: number, count: number, followEnd = false, preview?: number, wrapped = false) {
   resetGroups();
   patchToolBoxFrames({ icons: true, groupTools: true, backgroundJobs: false,
     ...(preview === undefined ? {} : { diffLines: preview }) });
@@ -42,7 +64,7 @@ async function screen(width: number, count: number, followEnd = false, preview?:
   const { diff } = generateDiffString(before, after);
   const args = { path: "mouse-edit.ts", edits: [{ oldText: before, newText: after }] };
   const callId = "mouse-edit-call";
-  const tool = new ToolExecutionComponent("edit", callId, args, {}, createEditToolDefinition(process.cwd()), tui, process.cwd());
+  const tool = new ToolExecutionComponent("edit", callId, args, {}, wrapped ? wrappedDefinition() : createEditToolDefinition(process.cwd()), tui, process.cwd());
   tool.updateResult({ content: [{ type: "text", text: "ok" }], details: { diff }, isError: false } as any, false);
   tool.setArgsComplete();
   const chat = new Container();
@@ -107,13 +129,14 @@ async function screen(width: number, count: number, followEnd = false, preview?:
 }
 
 for (const width of [60, 120]) {
-  for (const count of [1, 40]) {
-    test(`fullscreen ${width} columns, ${count}-line edit: real pointer round trip and filename link`, async () => {
-      const s = await screen(width, count);
+  for (const count of [1, 40]) for (const wrapped of [false, true]) {
+    test(`fullscreen ${width} columns, ${count}-line edit, wrapped ${wrapped}: pointer round trip and filename link`, async () => {
+      const s = await screen(width, count, false, undefined, wrapped);
       try {
         const collapsedHeight = s.tool.render(width).length;
         assert.equal((s.tool as any).expanded, false);
         assert.ok(!s.lines().some((line) => line.includes("AFTER_")), "default collapse has no preview rows");
+        assert.equal(s.lines().filter((line) => line.includes("mouse-edit.ts")).length, 1, "wrapper must not duplicate the header or leak the native body");
         const row = s.lines().findIndex((line) => line.includes("mouse-edit.ts"));
         const x = s.lines()[row]!.indexOf("mouse-edit.ts") + 2;
         assert.ok(getOsc8LinkAtColumn(s.raw()[row]!, x));

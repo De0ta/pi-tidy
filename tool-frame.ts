@@ -17,7 +17,7 @@
  */
 
 import { homedir } from "node:os";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Container, visibleWidth } from "@earendil-works/pi-tui";
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { blankEdges, drawFrame, outsideHyperlink, removeLeadingWord, sameLines, visibleIndexOf } from "./frame-draw.ts";
 import { sliceByColumn } from "@earendil-works/pi-tui";
@@ -42,6 +42,11 @@ import {
 interface MouseTarget {
   render(width: number): string[];
   handleMouse?(event: unknown): unknown;
+}
+
+interface EditCallComponent extends MouseTarget {
+  preview?: { diff?: unknown; error?: unknown };
+  children?: ReadonlyArray<EditCallComponent>;
 }
 
 /**
@@ -70,10 +75,8 @@ interface ToolBoxInternals extends GroupedTool {
   imageComponents: Array<{ render(width: number): string[] }>;
   imageSpacers: Array<{ render(width: number): string[] }>;
   /** The component pi wrapped around the call renderer's output (the edit Box). */
-  callRendererComponent?: {
-    preview?: { diff?: unknown; error?: unknown };
-    children?: ReadonlyArray<{ render(width: number): string[] }>;
-  };
+  callRendererComponent?: EditCallComponent;
+  resultRendererComponent?: EditCallComponent;
   hasRendererDefinition(): boolean;
   getRenderShell(): "default" | "self";
   __frameCache?: {
@@ -281,28 +284,57 @@ export function patchToolBoxFrames(options: ToolFrameOptions = {}): void {
  */
 const EDIT_DIFF_TOOLS = new Set(["edit"]);
 
-/**
- * Rebuild an edit box's rows as a budgeted split or unified preview.
- *
- * pi's edit renderer keeps the unified diff string on its call component
- * (`preview.diff`) and renders it with `renderDiff`; the coloured lines are not
- * reversible, so the panes are built from that string instead. Undefined means
- * "keep what pi drew": no preview yet (streaming), an error, or an empty diff.
- * Narrow/disabled splits use a unified body with the same expansion policy.
+interface EditDiffSource {
+  diff: string;
+  header: MouseTarget;
+}
+
+function emptyContainer(component: EditCallComponent): boolean {
+  return component.render === Container.prototype.render && component.children?.length === 0;
+}
+
+/** Find the native call inside transparent wrappers, without rendering a body.
+ * Disabled pi-quiet still wraps the call and appends an empty result Container.
+ * Stop at meaningful siblings/unknown layouts; never discard custom content.
  */
+function editDiffSource(tool: ToolBoxInternals): EditDiffSource | undefined {
+  if (!EDIT_DIFF_TOOLS.has(tool.toolName) || tool.result?.isError) return undefined;
+  if (tool.resultRendererComponent && !emptyContainer(tool.resultRendererComponent)) return undefined;
+  let component = tool.callRendererComponent;
+  for (let depth = 0; component && depth < 16; depth++) {
+    // A single child alone does not make a wrapper transparent: an overridden
+    // renderer can prepend warnings without adding them to `children`.
+    if (component.render !== Container.prototype.render && component.render !== Box.prototype.render) return undefined;
+    if ("preview" in component || "previewArgsKey" in component) {
+      const header = component.children?.[0];
+      if (typeof header?.render !== "function") return undefined;
+      const details = tool.result?.details;
+      const settledDiff = details && typeof details === "object" && "diff" in details ? details.diff : undefined;
+      // Saved successful output is authoritative, even if a filesystem preview
+      // is missing, stale, or failed after the file was subsequently changed.
+      if (typeof settledDiff === "string") return settledDiff.trim() ? { diff: settledDiff, header } : undefined;
+      const preview = component.preview;
+      return preview && !("error" in preview) && typeof preview.diff === "string" && preview.diff.trim()
+        ? { diff: preview.diff, header } : undefined;
+    }
+    const children = component.children;
+    if (!children?.length || children.some((child, index) => index > 0 && !emptyContainer(child))) return undefined;
+    component = children[0];
+  }
+  return undefined;
+}
+
+/** Rebuild a recognized native edit as a budgeted split or unified preview. */
 function editDiffBody(
   tool: ToolBoxInternals,
   innerWidth: number,
   callWidth: number,
   theme: ThemeLike,
+  edit: EditDiffSource | undefined,
 ): { raw: string[]; bgRows: ReadonlySet<number> } | undefined {
   const { splitDiff, splitDiffMinWidth, diffLines } = toolOptions.get();
-  if (!EDIT_DIFF_TOOLS.has(tool.toolName) || tool.result?.isError) return undefined;
-  const component = tool.callRendererComponent;
-  const preview = component?.preview;
-  if (!preview || "error" in preview) return undefined;
-  const diff = typeof preview.diff === "string" ? preview.diff : undefined;
-  if (!diff) return undefined;
+  if (!edit) return undefined;
+  const { diff, header } = edit;
   const path = (tool.args as { path?: unknown } | undefined)?.path;
   let renderers = editDiffRenderers.get(tool);
   if (!renderers) {
@@ -323,7 +355,7 @@ function editDiffBody(
   // Row 0 is the call row (`edit ~/x.ts`), which keeps pi's rendering so the
   // icon prefix and path shortening still apply; the body starts with its own
   // summary row (`↳ diff +1 -1 [...]`).
-  const call = component?.children?.[0]?.render(callWidth) ?? [];
+  const call = header.render(callWidth);
   const offset = call.length;
   return {
     raw: [...call, ...body.lines],
@@ -359,14 +391,12 @@ function editDiffBody(
       }
     }
     const iconCells = (kindPrefix ? visibleWidth(kindPrefix) : 0) + (fileGlyph ? visibleWidth(fileGlyph) + 1 : 0);
-    const preview = this.callRendererComponent?.preview;
-    const hasEditDiff = this.toolName === "edit" && !this.result?.isError && preview &&
-      !("error" in preview) && typeof preview.diff === "string" && !!preview.diff.trim();
+    const edit = editDiffSource(this);
     // A separate, non-link toggle: Pi activates OSC 8 filename links before
     // dispatching a click to a component. Reserve these cells on the call row.
-    const toggle = hasEditDiff ? `${this.expanded ? "▾" : "▸"} ` : "";
+    const toggle = edit ? `${this.expanded ? "▾" : "▸"} ` : "";
     const sourceWidth = w - 2 - iconCells - visibleWidth(toggle);
-    const split = editDiffBody(this, w - 2, sourceWidth, theme);
+    const split = editDiffBody(this, w - 2, sourceWidth, theme, edit);
     const raw = split ? split.raw : source.render(sourceWidth);
 
     // The whole returned array is cached, not just the framed body.

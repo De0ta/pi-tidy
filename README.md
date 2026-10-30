@@ -273,8 +273,13 @@ layout. Subclasses that only customize input (such as PiSessionDeck's
 BrowserEditor) keep their shortcuts. Unknown layouts are left untouched with a
 warning, rather than silently losing editing features. Load a cooperative editor
 provider **before** tidy. A provider loaded later owns the single factory slot;
-tidy will not reclaim it or overwrite it during cleanup. Keep the full pi-quiet
-extension **disabled** when using this style.
+tidy will not reclaim it or overwrite it during cleanup. Disable the full
+pi-quiet **extension resources** in `pi config` when using this style. Merely
+running `/quiet off` is not equivalent: some versions still install a tool
+renderer wrapper while their visual preference is off. Tidy can fold native
+edits inside plain Container/Box wrappers, using successful saved `details.diff`
+in preference to a transient filesystem preview. Unknown custom renderers or
+additional content are preserved rather than discarded to force folding.
 
 **Other footer factories:** Pi has one public footer slot and no footer getter.
 Quiet mode installs a compact footer; the last footer provider wins. Tidy's

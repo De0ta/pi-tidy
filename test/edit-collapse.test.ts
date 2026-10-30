@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AssistantMessageComponent, createEditToolDefinition, generateDiffString, initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
-import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, stripTerminalSequences, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { patchToolBoxFrames } from "../frame.ts";
 import { resetGroups } from "../tool-groups.ts";
 import { createSplitDiffRenderer, renderUnifiedDiff } from "../split-diff.ts";
@@ -150,6 +150,70 @@ test("alternating real unified edit boxes keep their own cached body until conte
     a.setExpanded(true);
     assert.match(clean(a.render(60)).join("\n"), /UPDATED_39/);
   } finally { theme.fg = fg; }
+});
+
+test("successful saved diff overrides missing, stale or errored filesystem previews without mutating them", () => {
+  patchToolBoxFrames({ icons: true, groupTools: false, diffLines: 0 });
+  for (const preview of [undefined, { error: "old text no longer exists" }, { diff: diff.replaceAll("AFTER_", "STALE_") }]) {
+    const component = editBox() as any;
+    component.callRendererComponent.preview = preview;
+    for (const width of [60, 120]) {
+      const collapsed = clean(component.render(width));
+      assert.ok(collapsed.some((line) => line.includes("▸")));
+      assert.ok(collapsed.some((line) => line.includes("↳ diff")));
+      assert.ok(!collapsed.some((line) => /BEFORE_|AFTER_|STALE_/.test(line)));
+      component.setExpanded(true);
+      // setExpanded updates native renderers; simulate a wrapper retaining an
+      // obsolete preflight value after that update, as it may during replay.
+      component.callRendererComponent.preview = preview;
+      const expanded = clean(component.render(width)).join("\n");
+      assert.match(expanded, /AFTER_39/);
+      assert.doesNotMatch(expanded, /STALE_/);
+      assert.equal(component.callRendererComponent.preview, preview, "render only reads another renderer's state");
+      component.setExpanded(false);
+      component.callRendererComponent.preview = preview;
+      assert.deepEqual(clean(component.render(width)), collapsed);
+    }
+  }
+});
+
+test("unknown wrapper notes and custom result content are never discarded to obtain a foldable diff", () => {
+  patchToolBoxFrames({ icons: true, groupTools: false, diffLines: 0 });
+  for (const where of ["call", "result", "custom-render"]) {
+    const wrapped = { ...definition,
+      renderCall(args: any, theme: any, context: any) {
+        const s = context.state;
+        s.inner ??= {};
+        s.call = definition.renderCall!(args, theme, { ...context, state: s.inner, lastComponent: s.call });
+        const root = new Container();
+        root.addChild(s.call);
+        if (where === "call") root.addChild(new Text("Important extension note", 0, 0));
+        if (where === "custom-render") {
+          const render = root.render;
+          root.render = (width: number) => ["Important extension note", ...render.call(root, width)];
+        }
+        return root;
+      },
+      renderResult(result: any, options: any, theme: any, context: any) {
+        const s = context.state;
+        s.result = definition.renderResult!(result, options, theme, { ...context, state: s.inner, lastComponent: s.result });
+        if (where !== "result") return s.result;
+        const root = new Container();
+        root.addChild(s.result);
+        root.addChild(new Text("Important extension note", 0, 0));
+        return root;
+      },
+    };
+    const component = new ToolExecutionComponent("edit", `custom-${where}`, {
+      path: "custom-edit.ts", edits: [{ oldText: before, newText: after }],
+    }, {}, wrapped, ui as any, cwd);
+    component.updateResult({ content: [{ type: "text", text: "ok" }], details: { diff }, isError: false } as any, false);
+    for (const width of [60, 120]) {
+      const lines = clean(component.render(width));
+      assert.match(lines.join("\n"), /Important extension note/);
+      assert.ok(!lines.some((line) => line.includes("↳ diff")), "unknown custom layouts keep their original presentation");
+    }
+  }
 });
 
 test("a failed edit keeps Pi's error even if a successful diff preview remains", () => {

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { Box } from "@earendil-works/pi-tui";
 import { createSplitDiffRenderer, type SplitDiffInput } from "../split-diff.ts";
 import { patchToolBoxFrames } from "../frame.ts";
 import { getTheme } from "../theme-access.ts";
@@ -56,7 +57,8 @@ function edit(diff = DIFF) {
   component.setExpanded(false);
   component.updateResult({ content: [{ type: "text", text: "fallback body" }], isError: false }, false);
   let label = "edit sample.ts";
-  const call = { preview: { diff }, children: [{ render: () => [label] }] };
+  const call = Object.assign(new Box(0, 0), { preview: { diff } });
+  call.addChild({ render: () => [label], invalidate() {} });
   component.callRendererComponent = call;
   return { component, call, setLabel: (text: string) => { label = text; } };
 }
