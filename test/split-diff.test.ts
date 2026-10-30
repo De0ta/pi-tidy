@@ -115,7 +115,7 @@ const dir = mkdtempSync(join(tmpdir(), "pi-tidy-split-"));
 const cwd = dir;
 const editDef = createEditToolDefinition(cwd);
 const ui = { requestRender: () => {} };
-patchToolBoxFrames({ icons: false, splitDiff: true, splitDiffMinWidth: 72 });
+patchToolBoxFrames({ icons: false, splitDiff: true, splitDiffMinWidth: 72, diffLines: 20 });
 
 /** pi computes the preview asynchronously (it reads the file); give it a beat. */
 async function editBox(path: string, width: number): Promise<string[]> {
@@ -208,7 +208,7 @@ test("no budget draws every row — that is what ctrl+o does", () => {
   assert.ok(all.some((line) => line.includes("line 60 CHANGED")));
 });
 
-test("a collapsed edit box is clipped to diffLines; ctrl+o draws all of it", async () => {
+test("a collapsed edit box is clipped to diffLines; setExpanded draws all of it", async () => {
   const before = Array.from({ length: 40 }, (_, i) => `const k${i} = ${i};`).join("\n");
   const after = before.replaceAll("const k", "let  k");
   const file = join(dir, "big.ts");

@@ -43,7 +43,7 @@ for (const mode of [
   { name: "split disabled", width: 100, splitDiff: false, splitDiffMinWidth: 72 },
   { name: "split layout refuses width", width: 40, splitDiff: true, splitDiffMinWidth: 1 },
 ]) {
-  for (const groupTools of [true, false]) test(`${mode.name}, grouping ${groupTools}: header/body clicks and Ctrl+O visibly expand/collapse`, () => {
+  for (const groupTools of [true, false]) test(`${mode.name}, grouping ${groupTools}: header/body clicks and the shared expansion setter visibly expand/collapse`, () => {
     resetGroups();
     patchToolBoxFrames({ icons: false, groupTools, ...mode, diffLines: 5 });
     const component = editBox();

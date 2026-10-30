@@ -54,8 +54,8 @@ export interface TidyConfig {
   /** Box width below which the split becomes unreadable; pi's diff is used. */
   splitDiffMinWidth: number;
   /**
-   * Diff body rows shown while the box is collapsed (default 20). The window
-   * follows the first changed line, not the top of the file; `ctrl+o` shows all.
+   * Diff body rows shown while collapsed (default 0: summary only). A positive
+   * budget follows the first changed line; opening the box shows all rows.
    * edit has no such budget of its own — pi draws the whole diff.
    */
   diffLines: number;
@@ -104,7 +104,7 @@ const DEFAULTS: TidyConfig = {
   hideJobNotifications: true,
   splitDiff: true,
   splitDiffMinWidth: 72,
-  diffLines: 20,
+  diffLines: 0,
   thinkingColor: "warning",
   messageBorderColors: {
     user: "toolTitle",

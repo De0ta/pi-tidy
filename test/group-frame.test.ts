@@ -268,14 +268,15 @@ test("edit keeps pi's own box, splits the group, and its box takes clicks", () =
   chat.addChild(b.component);
   const lines = frame(chat);
   assert.ok(lines.includes(" ▸ 1 call · bash×1 · 1 thought · 0.2s"));
-  // The row is the two-pane diff now, so the added text sits on its own side.
-  assert.ok(lines.some((line) => line.includes("const a = 2;")), "the diff shows without a click");
+  assert.ok(lines.some((line) => line.includes("↳ diff")), "the summary stays visible");
+  assert.ok(!lines.some((line) => line.includes("const a = 2;")), "collapsed now means summary-only");
   assert.equal(lines.filter((line) => line.includes("1 call")).length, 2, "calls after the edit start a new group");
 
   // edit renders with renderShell "self"; pi's handler for those reads a height
   // only its own render records, so before 0.4.0 these clicks were dropped.
-  assert.ok(click(chat, "const a = 2;", 6));
+  assert.ok(click(chat, "/tmp/x.ts", 2));
   assert.equal(e.component.expanded, true);
+  assert.ok(frame(chat).some((line) => line.includes("const a = 2;")));
 });
 
 test("ctrl+o expands every box and folds back to the C line", () => {

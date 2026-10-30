@@ -113,7 +113,7 @@ export interface ToolFrameOptions {
   splitDiff?: boolean;
   /** Box width below which the split falls back to pi's unified diff (default 72). */
   splitDiffMinWidth?: number;
-  /** Diff rows shown while the box is collapsed (default 20; `0` shows none). */
+  /** Diff rows shown while collapsed (default 0: summary only). */
   diffLines?: number;
   /** Theme color for thinking rows and the expanded thinking box (default `warning`). */
   thinkingColor?: string;
@@ -137,7 +137,7 @@ const toolOptions = liveSlot<ResolvedToolFrameOptions>("tool-frame-options", {
   alwaysShow: new Set(["edit", "write"]),
   splitDiff: true,
   splitDiffMinWidth: 72,
-  diffLines: 20,
+  diffLines: 0,
   thinkingColor: "warning",
 });
 
@@ -166,7 +166,7 @@ export function patchToolBoxFrames(options: ToolFrameOptions = {}): void {
     hideJobNotifications = true,
     splitDiff = true,
     splitDiffMinWidth = 72,
-    diffLines = 20,
+    diffLines = 0,
     thinkingColor = "warning",
   } = options;
   toolOptions.set({
@@ -359,7 +359,13 @@ function editDiffBody(
       }
     }
     const iconCells = (kindPrefix ? visibleWidth(kindPrefix) : 0) + (fileGlyph ? visibleWidth(fileGlyph) + 1 : 0);
-    const sourceWidth = w - 2 - iconCells;
+    const preview = this.callRendererComponent?.preview;
+    const hasEditDiff = this.toolName === "edit" && !this.result?.isError && preview &&
+      !("error" in preview) && typeof preview.diff === "string" && !!preview.diff.trim();
+    // A separate, non-link toggle: Pi activates OSC 8 filename links before
+    // dispatching a click to a component. Reserve these cells on the call row.
+    const toggle = hasEditDiff ? `${this.expanded ? "▾" : "▸"} ` : "";
+    const sourceWidth = w - 2 - iconCells - visibleWidth(toggle);
     const split = editDiffBody(this, w - 2, sourceWidth, theme);
     const raw = split ? split.raw : source.render(sourceWidth);
 
@@ -421,6 +427,9 @@ function editDiffBody(
         row = at >= 0 ? row.slice(0, at) + fileGlyph + " " + row.slice(at) : kindPrefix + fileGlyph + " " + first;
       }
       content = [row, ...content.slice(1)];
+    }
+    if (split && toggle && content.length > 0) {
+      content = [theme.fg("muted", toggle) + content[0], ...content.slice(1)];
     }
     // Unframed means the call row is already the row above it: the body is the
     // output, not the command again. The blank row that separated them goes too.

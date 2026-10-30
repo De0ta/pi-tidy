@@ -7,7 +7,7 @@ import { patchToolBoxFrames } from "../frame.ts";
 import { getTheme } from "../theme-access.ts";
 
 initTheme("dark");
-const options = { icons: false, groupTools: false, backgroundJobs: false } as const;
+const options = { icons: false, groupTools: false, backgroundJobs: false, diffLines: 20 } as const;
 patchToolBoxFrames(options);
 const DIFF = "-1 const oldValue = 1;\n+1 const newValue = 2;";
 const input = (): SplitDiffInput => ({ diff: DIFF, width: 100, theme: getTheme()!, filePath: "sample.ts", maxLines: 20 });

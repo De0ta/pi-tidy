@@ -81,6 +81,7 @@ test("no settings file: defaults", () => {
   try {
     assert.equal(loadConfig().groupTools, true);
     assert.equal(loadConfig().editorStyle, "native");
+    assert.equal(loadConfig().diffLines, 0);
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;

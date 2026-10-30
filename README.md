@@ -62,9 +62,23 @@ every box gets a rounded transparent frame.
   plus `(+N more lines, ctrl+o to expand)`, so a long tool call no longer owns the screen; `ctrl+o`
   restores the whole command
 - **Bash syntax highlighting** — commands get token-level coloring (commands, flags, strings, variables, operators, etc.)
-- **Click a box to fold it** — clicks land on pi's own expand toggle at the right row, for every tool
-  including `renderShell: "self"` ones (edit, MCP)
+- **Click a box to fold it** — non-link clicks land on pi's own expand toggle at the right row,
+  including `renderShell: "self"` ones (edit, MCP); native filename links still open the file
 - **Scroll-safe caching** — an unchanged box costs one line comparison per frame, nothing is re-framed
+
+### Edit fold controls
+
+Edit boxes show a separate `▸` (collapsed) / `▾` (expanded) switch before the
+file icon. Click it, a border, or non-link diff text to toggle that box. Native
+OSC 8 **filename links still open the file**; they are not fold buttons in Pi's
+fullscreen interface. Drag selection and wheel scrolling remain native.
+
+The default `diffLines: 0` makes collapse a real summary-only state, even for
+small edits. An explicit positive `diffLines` retains that many preview rows;
+a diff fitting entirely within that budget will not change height when opened.
+`ctrl+o` remains Pi's **global** expand/collapse-all command, not a toggle for
+the last clicked box. After individually opening a box, the first `ctrl+o` can
+expand the remaining boxes rather than close that one; click `▾` to close it.
 
 ## What it looks like
 
@@ -153,7 +167,7 @@ For `editorStyle`, save your draft and **restart Pi** after changing the setting
     "icons": true,
     "bashResultLines": 1,
     "writeLines": 10,
-    "diffLines": 20,
+    "diffLines": 0,
     "thinkingColor": "warning",
     "groupTools": true,
     "alwaysShowTools": ["edit", "write"],
@@ -195,7 +209,7 @@ For `editorStyle`, save your draft and **restart Pi** after changing the setting
 | `splitDiff` | boolean | `true` | Render an edit's diff as two panes (`old │ new`) with line numbers, a bar and a tinted row per changed line. `false` keeps pi's unified diff |
 | `splitDiffMinWidth` | number | `72` | Box width below which the split is dropped for pi's unified diff — two panes need room to stay readable |
 | `thinkingColor` | theme color | `warning` | Colour of the brain, the `N thoughts` count and an expanded thinking box. Any theme color name or `#rrggbb` |
-| `diffLines` | number | `20` | Collapsed edit-body rows in **both split and unified layouts**, including `splitDiff: false` and narrow windows (wrapped unified lines count as visual rows). The window is anchored at the first changed line, with an omitted-line/click hint. Click the box or use `ctrl+o` to expand/collapse; `0` keeps the summary and hidden-line hint |
+| `diffLines` | number | `0` | Collapsed edit-body rows in **both split and unified layouts**. By default only the file header, summary and hidden-line hint remain, so even a short edit visibly folds. Set a positive value (e.g. `20`) for a preview anchored at the first change; wrapped unified lines count as visual rows. Click `▸` / `▾` or a non-link part of the box to toggle |
 | `bashResultLines` | number | `1` | Visual lines of bash *output* shown while collapsed. pi's renderer hard-codes 5 with no setting; raise this for more context, `0` to hide output until you expand |
 | `writeLines` | number | `10` | Visual lines of a written file shown while the box is collapsed (pi's own number, now adjustable). `0` keeps just the header until you expand. Requires Pi's `registerToolRenderer` API |
 | `toolColors` | object | see above | Border color per tool name for successful executions (pending stays grey, errors stay red, unlisted tools take `accent`). When set, the map **replaces** the defaults — `{}` disables per-tool colors |
