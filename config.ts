@@ -12,6 +12,8 @@ export interface MessageBorderColors {
 
 export interface TidyConfig {
   enabled: boolean;
+  /** Opt-in input frame and compact footer; native editing remains unchanged. */
+  editorStyle: "native" | "quiet";
   highlightBash: boolean;
   /** Give message boxes the same rounded transparent frame as tool boxes. */
   frameMessages: boolean;
@@ -89,6 +91,7 @@ const DEFAULT_TOOL_COLORS: Record<string, string> = {
 
 const DEFAULTS: TidyConfig = {
   enabled: true,
+  editorStyle: "native",
   highlightBash: true,
   frameMessages: true,
   frameUserMessages: false,
@@ -125,6 +128,7 @@ export function loadConfig(): TidyConfig {
     const toolbox = settings?.tidy ?? settings?.toolbox;
     return {
       enabled: toolbox?.enabled ?? DEFAULTS.enabled,
+      editorStyle: toolbox?.editorStyle === "quiet" ? "quiet" : DEFAULTS.editorStyle,
       highlightBash: toolbox?.highlightBash ?? DEFAULTS.highlightBash,
       frameMessages: toolbox?.frameMessages ?? DEFAULTS.frameMessages,
       frameUserMessages: toolbox?.frameUserMessages ?? DEFAULTS.frameUserMessages,

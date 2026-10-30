@@ -693,7 +693,7 @@ export function setThinkingColor(color: () => string): void {
  * streaming, and a window recomputed per paint slides one cell per token, which
  * reads as flicker. The row keeps its last string until the tick expires.
  */
-const liveRows = new Map<object, { at: number; texts: string[] }>();
+const liveRows = new WeakMap<object, { at: number; texts: string[] }>();
 
 /**
  * The preview for one live run, held steady between ticks. Text short enough to
@@ -777,11 +777,18 @@ function installRethinkMouse(component: any): void {
   };
 }
 
-function restyleThinking(component: any, lines: string[], width: number): string[] {
+function restyleThinking(component: any, renderOriginal: () => string[], width: number): string[] {
   const theme = getTheme();
   const runs = thinkingRuns(component.lastMessage);
   const kids = component.contentContainer?.children;
-  if (!theme || runs.length === 0 || !Array.isArray(kids) || kids.length === 0) return lines;
+  if (!theme || runs.length === 0 || !Array.isArray(kids) || kids.length === 0) return renderOriginal();
+  const regions = kids.filter((kid: any) => kid instanceof MouseRegion);
+  // These are private Pi internals: do not guess at a different child layout,
+  // or leave a partial patch on a region an extension has made non-configurable.
+  if (regions.length !== runs.length || regions.some((kid: any) => {
+    const own = Object.getOwnPropertyDescriptor(kid, "render");
+    return own ? !own.configurable : !Object.isExtensible(kid);
+  })) return renderOriginal();
   const overrides = component.thinkingVisibilityOverrides as Map<number, boolean> | undefined;
   for (let i = 0; i < runs.length; i++) if (!overrides?.has?.(i)) overrides?.set?.(i, true);
 
@@ -796,44 +803,70 @@ function restyleThinking(component: any, lines: string[], width: number): string
   const budget = Math.max(1, width - THOUGHT_LABEL_CELLS - 1);
   const liveTexts = thought.live ? liveRowText(component, runs, runs.map(() => budget), Date.now()) : undefined;
   const spinner = thought.live ? thinkingSpinner(Date.now()) : undefined;
-  const out: string[] = [];
-  /** Rows of every run row plus its box: the click target for toggling it. */
-  const spans: Array<{ from: number; to: number; run: number }> = [];
-  let cursor = 0;
-  let run = 0;
-  for (const kid of kids) {
-    const own = kid.render(width) as string[];
-    const taken = lines.slice(cursor, cursor + own.length);
-    cursor += own.length;
-    if (!(kid instanceof MouseRegion)) {
-      out.push(...(taken.length === own.length ? taken : own));
-      continue;
+  const patched: Array<{ kid: any; descriptor: PropertyDescriptor | undefined }> = [];
+  try {
+    for (let i = 0; i < regions.length; i++) {
+      const kid = regions[i];
+      const original = kid.render;
+      const descriptor = Object.getOwnPropertyDescriptor(kid, "render");
+      const shown = overrides?.get?.(i) === false;
+      let own: string[] | undefined;
+      // Pi's Markdown caches one width. Both the predecessor's render and our
+      // height measurement must use the FINAL body width, not alternate W and
+      // W-2 every frame. A folded run needs no body render at all. This adapter
+      // is scoped to this transaction; other extensions keep their renderer.
+      Object.defineProperty(kid, "render", {
+        configurable: true,
+        writable: true,
+        value: () => own ??= shown ? original.call(kid, Math.max(4, width - BOX_CELLS)) : [""],
+      });
+      patched.push({ kid, descriptor });
     }
-    const text = liveTexts?.[run] ?? previewText(runs[run] ?? "", budget);
-    const shown = overrides?.get?.(run) === false;
-    run++;
-    // The label stays in both states: outside a group the box is the only frame,
-    // so it needs the title above it to say what it is.
-    out.push(formatThoughtLine(text, theme, { icons, thinkingColor: color, spinner }));
-    const from = out.length - 1;
-    if (!shown) {
-      spans.push({ from, to: from, run: run - 1 });
-      continue;
+    const lines = renderOriginal();
+    const out: string[] = [];
+    /** Rows of every run row plus its box: the click target for toggling it. */
+    const spans: Array<{ from: number; to: number; run: number }> = [];
+    let cursor = 0;
+    let run = 0;
+    for (const kid of kids) {
+      const own = kid.render(width) as string[];
+      const taken = lines.slice(cursor, cursor + own.length);
+      cursor += own.length;
+      if (!(kid instanceof MouseRegion)) {
+        out.push(...(taken.length === own.length ? taken : own));
+        continue;
+      }
+      const text = liveTexts?.[run] ?? previewText(runs[run] ?? "", budget);
+      const shown = overrides?.get?.(run) === false;
+      run++;
+      // The label stays in both states: outside a group the box is the only
+      // frame, so it needs the title above it to say what it is.
+      out.push(formatThoughtLine(text, theme, { icons, thinkingColor: color, spinner }));
+      const from = out.length - 1;
+      if (shown) {
+        const body = trimBlankEdges(own);
+        out.push(...(body.length > 0 ? drawFrame(body, width, theme, color) : []));
+      }
+      // Pi can attach its closing zone markers to the last thinking child.
+      // Preserve them when replacing that child's original rows with our box.
+      const markers = taken.join("").match(ZONE_MARKERS) ?? [];
+      out[from] = markers.filter((m) => m.includes(";A")).join("") + out[from];
+      out[out.length - 1] += markers.filter((m) => !m.includes(";A")).join("");
+      spans.push({ from, to: out.length - 1, run: run - 1 });
     }
-    const body = trimBlankEdges(kid.render(Math.max(4, width - BOX_CELLS)) as string[]);
-    out.push(...(body.length > 0 ? drawFrame(body, width, theme, color) : []));
-    spans.push({ from, to: out.length - 1, run: run - 1 });
+    out.push(...lines.slice(cursor));
+    // Padding can carry OSC 133 markers: ignore escapes when shifting clicks.
+    const lead = out.findIndex((line) => line.replace(WITHOUT_ESCAPES, "").trim() !== "");
+    const shift = lead > 0 ? lead : 0;
+    component[THOUGHT_SPANS] = spans.map((span) => ({ ...span, from: span.from - shift, to: span.to - shift }));
+    installRethinkMouse(component);
+    return trimMessageEdges(out);
+  } finally {
+    for (const { kid, descriptor } of patched) {
+      if (descriptor) Object.defineProperty(kid, "render", descriptor);
+      else delete kid.render;
+    }
   }
-  out.push(...lines.slice(cursor));
-  // The wrapper trims pi's padding rows off the edges; the recorded spans have
-  // to move with them, or a click lands on the row above the box.
-  // Escape-aware: the row pi pads with carries the OSC 133 marker, so a plain
-  // `trim()` check thinks it is content and the spans never move.
-  const lead = out.findIndex((line) => line.replace(WITHOUT_ESCAPES, "").trim() !== "");
-  const shift = lead > 0 ? lead : 0;
-  component[THOUGHT_SPANS] = spans.map((span) => ({ ...span, from: span.from - shift, to: span.to - shift }));
-  installRethinkMouse(component);
-  return trimMessageEdges(out);
 }
 
 /** A rendered row with every escape sequence gone: what the reader sees. */
@@ -884,7 +917,7 @@ function wrapBoundaryRender(proto: { render?: RenderFn } | undefined, view: (com
     // Compact assistant/custom message edges around a group. User messages opt
     // out above so their padding still separates turns.
     const trim = (lines: string[]) => trimMessageEdges(lines);
-    if (how === "rethink") return trim(restyleThinking(this, render.apply(this, args), typeof width === "number" ? width : 80));
+    if (how === "rethink") return trim(restyleThinking(this, () => render.apply(this, args), typeof width === "number" ? width : 80));
     if (typeof how === "object") return how.lines;
     return trim(render.apply(this, args));
   };

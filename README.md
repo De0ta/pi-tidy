@@ -29,8 +29,9 @@ every box gets a rounded transparent frame.
   put and takes a `├─` tick off the rail, because inside a group the rail already frames it and a box
   there was a frame inside a frame. The `▾` header folds the whole group. The assistant's text always
   shows and is what separates groups, so you can still see a reply drifting; tool-only model steps
-  don't split a group. Edits and writes never fold — their diff shows like any normal box
-  (`alwaysShowTools`), clipped to `diffLines` while collapsed.
+  don't split a group. Edits and writes stay outside groups (`alwaysShowTools`), but their
+  individual previews still expand/collapse on a box click or `ctrl+o`. Edit previews obey
+  `diffLines` in both split and unified layouts, including narrow terminals.
   Steps are separated by one blank rail row, so a long group reads as blocks rather than a wall.
   A folded group is one line: only a *running* call keeps a row, and a failure is reported once, as
   `3 failed` in red (`✗` per row once you open it). Every row says what the call produced
@@ -89,9 +90,15 @@ Click `▸ 5 calls` and it becomes a `▾` header with one row per call, each st
 
 ## Installation
 
+Install this fork (including the scroll-cache fixes, quiet input/compact footer and
+collapsible unified edit previews):
+
 ```bash
-pi install npm:pi-tidy
+pi install git:github.com/De0ta/pi-tidy
 ```
+
+Disable/remove any other installed copy of pi-tidy before enabling this fork.
+`npm:pi-tidy` is the upstream release and does not contain these fork changes.
 
 Requires pi ≥ 1.1.0 (component mouse events, tool durations); on an older pi it
 says so at session start. Bash highlighting and the custom write preview also need
@@ -99,11 +106,8 @@ says so at session start. Bash highlighting and the custom write preview also ne
 says so once, rather than falling back to a tool override that would stop another
 extension from loading.
 
-Or straight from the repo:
-
-```bash
-pi install git:github.com/Andy8647/pi-tidy
-```
+The original project is [Andy8647/pi-tidy](https://github.com/Andy8647/pi-tidy),
+also available as `npm:pi-tidy`.
 
 Restart pi to activate.
 
@@ -135,12 +139,14 @@ if the tag and the manifest version disagree.
 
 ## Configuration
 
-Add a `tidy` key to your `~/.pi/agent/settings.json`; changes apply on `/reload`:
+Add a `tidy` key to your `~/.pi/agent/settings.json`; most changes apply on `/reload`.
+For `editorStyle`, save your draft and **restart Pi** after changing the setting:
 
 ```json
 {
   "tidy": {
     "enabled": true,
+    "editorStyle": "native",
     "highlightBash": true,
     "frameMessages": true,
     "frameUserMessages": false,
@@ -177,6 +183,7 @@ Add a `tidy` key to your `~/.pi/agent/settings.json`; changes apply on `/reload`
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the extension |
+| `editorStyle` | `"native" \| "quiet"` | `"native"` | Opt-in input frame and single-line footer; restart after changing. Unknown values use `native`. See below |
 | `highlightBash` | boolean | `true` | Syntax-highlight bash commands |
 | `frameMessages` | boolean | `true` | Frame compaction/branch/skill/custom-message boxes like tool boxes |
 | `frameUserMessages` | boolean | `false` | Also frame user messages — off by default because pi-starline already restyles `UserMessageComponent`, and two render patches on one prototype fight over the output. Enable only without pi-starline |
@@ -184,11 +191,11 @@ Add a `tidy` key to your `~/.pi/agent/settings.json`; changes apply on `/reload`
 | `groupTools` | boolean | `true` | Fold the tool calls between two assistant text blocks (or a user message) into one summary line; click it for one row per call, click a row to open its output beneath it (no box inside the group), click the `▾` header to fold the group. `false` renders every call as its own box |
 | `backgroundJobs` | boolean | `true` | A call that started a background job (pi-processes) shows the job's live state on its row and in the summary. A *running* job keeps its row while folded; a finished one folds away (the summary counts it). The spinner turns once a second for a job's first 5 minutes, then stands still (a dev server can run for hours) |
 | `hideJobNotifications` | boolean | `true` | Don't draw a job's notification messages (`[process] "ticker" matched stdout: READY`) once its row shows them. Only drawing — the model still receives them. Jobs without a row keep their messages |
-| `alwaysShowTools` | string[] | `["edit", "write"]` | Tools that never fold: they keep their own box (with the diff) and end the group before them, so later calls start a new one. Set `[]` to fold edits and writes into the group like everything else — click their row for the box |
+| `alwaysShowTools` | string[] | `["edit", "write"]` | Tools that never fold into a group: they keep their own box and end the group before them. The box's own preview still expands/collapses on click or `ctrl+o`. Set `[]` to group edits and writes like other calls |
 | `splitDiff` | boolean | `true` | Render an edit's diff as two panes (`old │ new`) with line numbers, a bar and a tinted row per changed line. `false` keeps pi's unified diff |
 | `splitDiffMinWidth` | number | `72` | Box width below which the split is dropped for pi's unified diff — two panes need room to stay readable |
 | `thinkingColor` | theme color | `warning` | Colour of the brain, the `N thoughts` count and an expanded thinking box. Any theme color name or `#rrggbb` |
-| `diffLines` | number | `20` | Diff rows drawn while an edit box is collapsed. The window is anchored at the first changed line (a third of the budget of context above it), with `… (N more lines, M total, ctrl+o to expand)` under it — pi's own edit renderer has no budget at all, so this is the only thing keeping a long diff from owning the screen. `ctrl+o` draws all of it, `0` keeps just the summary row |
+| `diffLines` | number | `20` | Collapsed edit-body rows in **both split and unified layouts**, including `splitDiff: false` and narrow windows (wrapped unified lines count as visual rows). The window is anchored at the first changed line, with an omitted-line/click hint. Click the box or use `ctrl+o` to expand/collapse; `0` keeps the summary and hidden-line hint |
 | `bashResultLines` | number | `1` | Visual lines of bash *output* shown while collapsed. pi's renderer hard-codes 5 with no setting; raise this for more context, `0` to hide output until you expand |
 | `writeLines` | number | `10` | Visual lines of a written file shown while the box is collapsed (pi's own number, now adjustable). `0` keeps just the header until you expand. Requires Pi's `registerToolRenderer` API |
 | `toolColors` | object | see above | Border color per tool name for successful executions (pending stays grey, errors stay red, unlisted tools take `accent`). When set, the map **replaces** the defaults — `{}` disables per-tool colors |
@@ -200,6 +207,89 @@ execution status, so message kinds get hues that don't collide —
 `customMessageLabel` (mauve, matching the `[compaction]` label) for
 compactions, `mdCode` (peach) for branch summaries, `accent` (sky) for skill
 invocations, `warning` (yellow) for extension notices.
+
+### Quiet-inspired input and compact footer (Pi 1.4.0)
+
+Set `"tidy": { "editorStyle": "quiet" }` (merge into your existing `tidy` object):
+
+```text
+╭────────────────────────────────────────────────────╮
+│ ❯ Your draft                                       │
+│   continues here                                   │
+╰─────────────────────── Model name (thinking level) ─╯
+~/workspace (branch) • session name   5h 21% · 1w 60%
+```
+
+The input gets rounded sides, a prompt gutter and a right-aligned model/thinking
+label. The duplicate workspace line above it is removed. The footer becomes
+**one row**: workspace/session on the left, quota and other extension statuses
+on the right. Cumulative token/cache/cost/context statistics and the duplicate
+footer model are omitted; the model/thinking label remains on the input border.
+
+Workspace/session formatting follows native Pi: the original path (home becomes
+`~`), optional `(branch)`, optional ` • session name`, and the current theme's
+`dim` color. No brackets, basename-only path or unnamed-session placeholder is
+added. Names are sanitized and clipped by terminal columns (including Chinese
+and emoji). The input model label uses current `muted`/`accent` colors, thinking
+`off` omits its suffix, and borders retain Pi's editor border color. No global
+palette is replaced.
+
+The **original native editor instance does all editing**: completion, paste
+(including collapsed large pastes), history, undo, shortcuts, multiline layout
+and the hardware cursor marker for IME. Native padding settings still apply.
+Completion stays below the frame; input/completion mouse coordinates account
+for the horizontal margins only; no extra header row shifts clicks. Drag selection and wheel events remain
+with Pi. Below 12 columns the frame and labels yield to a clipped native editor.
+Pi still owns the working indicator (including an embedded native indicator).
+
+The welcome header, transcript, scrolling, message frames, tool groups, thinking
+boxes, split diffs and background jobs are not replaced. The compact footer uses
+Pi's public `setFooter` API and reads **all live keyed extension statuses** on
+every render. Subscription usage keeps its own percentages, reset countdowns,
+colors, loading/auth-error text and refresh behavior: tidy does not parse quota,
+add timers or make network requests. Existing status updates already request a
+Pi render. With limited width, quota (`subscription-usage`) is shown first, then
+other status keys alphabetically; long content is clipped, never moved to a
+second row. At least 40% of the row is reserved for identity (up to its full
+length), except below 8 columns where only clipped identity is shown.
+
+**Other editor factories:** tidy captures the current public editor factory and
+decorates its instance only when it uses Pi's native render, border and mouse
+layout. Subclasses that only customize input (such as PiSessionDeck's
+BrowserEditor) keep their shortcuts. Unknown layouts are left untouched with a
+warning, rather than silently losing editing features. Load a cooperative editor
+provider **before** tidy. A provider loaded later owns the single factory slot;
+tidy will not reclaim it or overwrite it during cleanup. Keep the full pi-quiet
+extension **disabled** when using this style.
+
+**Other footer factories:** Pi has one public footer slot and no footer getter.
+Quiet mode installs a compact footer; the last footer provider wins. Tidy's
+`dispose` cleanup will not erase a later provider, but it cannot restore an
+unknown earlier custom footer. Removing tidy's own footer restores Pi's built-in
+footer. Status-only extensions remain supported through `getExtensionStatuses()`;
+custom content drawn solely by another footer factory is not composed. Disable
+one footer provider or choose the load order explicitly when combining them.
+
+Installation happens at `session_start` in TUI mode only. No global editor
+prototype is patched; owned instance methods and factories are cleaned up on
+shutdown/runtime reload. A regular `/reload` uses Pi's runtime reset, but there
+is no live style-toggle command. Save drafts and restart when changing styles:
+Pi's factory replacement transfers raw text, **not undo/cursor/paste-map state**.
+To restore the original input, set `"editorStyle": "native"` and restart.
+Native mode registers neither editor nor footer factories/event handlers.
+
+**Verification:** automated tests exercise native editing equivalence,
+multiline/CJK/emoji widths, cursor markers, resize/narrow fallback, completion
+keyboard/mouse geometry, labels, native working status and factory ownership /
+cleanup. These are not a Windows Terminal end-to-end guarantee. After restarting,
+check IME candidate placement, actual drag selection, bracketed/clipboard paste,
+shortcuts (including SessionDeck's empty-input Left Arrow), completion menus,
+scrolling through old tools/thinking/diffs and a running background process.
+Also verify the native-looking identity and live quota/status content share just
+one footer row and that your welcome header is unchanged. Automated tests compare
+the identity's text/ANSI color with Pi's actual native footer and cover status
+updates, widths, disposal and later-footer ownership. License for the adapted
+input presentation: [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## How it works
 

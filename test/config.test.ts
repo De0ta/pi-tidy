@@ -60,11 +60,27 @@ test("settings use the native home directory when HOME is absent", (t) => {
   }
 });
 
+test("editor style is independent, opt-in and validates unknown values", () => {
+  for (const value of [undefined, "native", "other", true, null, 1, {}]) {
+    withSettings({ tidy: { editorStyle: value } }, () => assert.equal(loadConfig().editorStyle, "native"));
+  }
+  withSettings({ tidy: { editorStyle: "quiet" } }, () => {
+    const config = loadConfig();
+    assert.equal(config.editorStyle, "quiet");
+    assert.equal(config.groupTools, true);
+    assert.equal(config.splitDiff, true);
+    assert.equal(config.backgroundJobs, true);
+    assert.equal(config.frameMessages, true);
+  });
+  withSettings({ toolbox: { editorStyle: "quiet" } }, () => assert.equal(loadConfig().editorStyle, "quiet"));
+});
+
 test("no settings file: defaults", () => {
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(tmpdir(), "pi-tidy-does-not-exist");
   try {
     assert.equal(loadConfig().groupTools, true);
+    assert.equal(loadConfig().editorStyle, "native");
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;

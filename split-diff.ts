@@ -1,5 +1,5 @@
 /**
- * Side-by-side (old | new) body for the `edit` tool's diff.
+ * Side-by-side (old | new) and budgeted unified bodies for the `edit` tool's diff.
  *
  * pi renders an edit preview as a unified diff string (`+12 text`, `- 7 text`,
  * `  3 text`) and colours each line with toolDiffAdded / toolDiffRemoved /
@@ -12,8 +12,8 @@
  * background), so it follows whatever theme pi is running.
  */
 
-import { getLanguageFromPath, highlightCode, keyHint } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { getLanguageFromPath, highlightCode, keyHint, renderDiff } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "./theme-access.ts";
 
 /** Blank cells on each side of the panes (pi's Box uses the same padding). */
@@ -435,8 +435,8 @@ function renderCell(
  * Render the diff as two panes. Returns null when the width cannot hold a
  * readable split — the caller then keeps pi's unified diff.
  *
- * Memoised on the diff text: the frame patch re-renders every box on every
- * frame, and highlighting is the expensive part.
+ * Callers rendering a persistent component can use `createSplitDiffRenderer`
+ * to retain its last layout without other edit boxes evicting it.
  */
 /**
  * The line under the call row: `↳ diff +3 -1 [+++----]`.
@@ -461,15 +461,63 @@ function renderSummary(add: number, remove: number, width: number, palette: Pale
 }
 
 export function renderSplitDiff(input: SplitDiffInput): SplitDiffOutput | null {
-  const { diff, width, theme, filePath, maxLines } = input;
-  const key = `${width}\u0000${maxLines ?? "all"}\u0000${filePath ?? ""}\u0000${theme.fg("toolDiffAdded", "x")}\u0000${diff}`;
-  if (memo && memo.key === key) return memo.value;
-  const value = build(input);
-  memo = { key, value };
-  return value;
+  return build(input);
 }
 
-let memo: { key: string; value: SplitDiffOutput | null } | undefined;
+/** Native unified colors/wrapping, with the same collapsed budget as a split. */
+export function renderUnifiedDiff(input: SplitDiffInput): SplitDiffOutput | null {
+  const { diff, width, theme, filePath, maxLines } = input;
+  if (!diff.trim() || width < 4) return null;
+  const raw = diff.split("\n");
+  let added = 0;
+  let removed = 0;
+  for (const line of raw) {
+    const parsed = parseLine(line);
+    if (parsed?.prefix === "+") added++;
+    if (parsed?.prefix === "-") removed++;
+  }
+  const colored = renderDiff(raw.map(sanitize).join("\n"), { filePath }).split("\n");
+  // A wrapped context continuation can start with '+'/'-'. Carry the original
+  // diff-line classification through wrapping instead of guessing from its text.
+  const rows = colored.flatMap((line, index) => {
+    const prefix = parseLine(raw[index] ?? "")?.prefix;
+    const changed = prefix === "+" || prefix === "-";
+    return wrapTextWithAnsi(line, width - PAD * 2).map((text) => ({ text, changed }));
+  });
+  const window = clip(rows, maxLines, (row) => row.changed);
+  const label = (text: string) => theme.fg("toolDiffContext", text);
+  const lines = [renderSummary(added, removed, width, buildPalette(theme))];
+  if (window.above > 0) lines.push(pad(` ${label(`… ${window.above} lines above`)}`, width));
+  for (const row of window.rows) lines.push(pad(` ${row.text} `, width));
+  if (window.below > 0) {
+    const hint = keyHint("app.tools.expand", "to expand");
+    lines.push(pad(` ${label(`… (${window.below} more lines, ${rows.length} total, click or`)} ${hint}${label(")")}`, width));
+  }
+  return { lines, bgRows: [] };
+}
+
+/**
+ * One last-result cache per owner, not per module. Drop the renderer when its
+ * component is invalidated (including in-place theme changes). Keeping only
+ * the last input bounds memory while streaming, resizing or expanding a diff.
+ */
+export function createSplitDiffRenderer(render: typeof renderSplitDiff = renderSplitDiff): typeof renderSplitDiff {
+  let memo: { input: SplitDiffInput; value: SplitDiffOutput | null } | undefined;
+  return (input) => {
+    const previous = memo?.input;
+    if (
+      previous &&
+      previous.diff === input.diff &&
+      previous.width === input.width &&
+      previous.theme === input.theme &&
+      previous.filePath === input.filePath &&
+      previous.maxLines === input.maxLines
+    ) return memo!.value;
+    const value = render(input);
+    memo = { input: { ...input }, value };
+    return value;
+  };
+}
 
 function build(input: SplitDiffInput): SplitDiffOutput | null {
   const { diff, width, theme, filePath } = input;
@@ -500,7 +548,7 @@ function build(input: SplitDiffInput): SplitDiffOutput | null {
   const label = (text: string) => `${palette.contextFg}${text}\x1b[39m`;
   const separator = `${palette.separator}${SEPARATOR}\x1b[39m`;
   const header = `  ${label("old".padStart(lay.numWidth))} ${" ".repeat(lay.content)}${separator}  ${label("new".padStart(lay.numWidth))} ${" ".repeat(lay.content)}`;
-  const window = clip(rows, input.maxLines);
+  const window = clip(rows, input.maxLines, (row) => !!(row.left?.changed || row.right?.changed));
   // A zero budget is "just the summary": column headers over nothing read as a
   // rendering bug rather than a setting.
   if (window.rows.length > 0) lines.push(pad(" ".repeat(PAD) + header + " ".repeat(PAD), width));
@@ -556,7 +604,7 @@ function build(input: SplitDiffInput): SplitDiffOutput | null {
     const total = rows.length;
     lines.push(
       pad(
-        `${" ".repeat(PAD)}${label(`… (${window.below} more line${window.below === 1 ? "" : "s"}, ${total} total,`)} ${hint}${label(")")}`,
+        `${" ".repeat(PAD)}${label(`… (${window.below} more line${window.below === 1 ? "" : "s"}, ${total} total, click or`)} ${hint}${label(")")}`,
         width,
       ),
     );
@@ -571,14 +619,15 @@ function build(input: SplitDiffInput): SplitDiffOutput | null {
  * of context above it, so a one-line change in a 200-line file still shows the
  * line. Rows the window skips are reported on either side.
  */
-function clip(
-  rows: readonly Row[],
+function clip<T>(
+  rows: readonly T[],
   maxLines: number | undefined,
-): { rows: readonly Row[]; above: number; below: number } {
+  changed: (row: T) => boolean,
+): { rows: readonly T[]; above: number; below: number } {
   const budget = maxLines === undefined ? rows.length : Math.max(0, Math.floor(maxLines));
   if (budget >= rows.length) return { rows, above: 0, below: 0 };
   if (budget === 0) return { rows: [], above: 0, below: rows.length };
-  const first = rows.findIndex((row) => row.left?.changed || row.right?.changed);
+  const first = rows.findIndex(changed);
   const anchor = first < 0 ? 0 : first;
   const lead = Math.min(Math.floor(budget / 3), budget);
   const start = Math.max(0, Math.min(anchor - lead, rows.length - budget));

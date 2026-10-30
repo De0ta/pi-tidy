@@ -21,7 +21,8 @@
   "files": [
     "*.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "main": "./index.ts",
   "types": "./index.ts",

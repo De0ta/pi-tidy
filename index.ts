@@ -8,6 +8,7 @@
  *
  * Configuration (settings.json → "tidy"; the pre-rename "toolbox" key still works):
  *   enabled: boolean        — enable/disable the extension (default: true)
+ *   editorStyle: native | quiet — input + compact footer (default: native)
  *   highlightBash: boolean  — syntax-highlight bash commands (default: true)
  *   frameMessages: boolean  — rounded frame on message boxes (default: true)
  *   frameUserMessages: boolean — also frame user messages (default: false;
@@ -46,6 +47,8 @@ import { agentRunning, tidyEnabled } from "./live.ts";
 import { formatWriteCallText } from "./write-preview.ts";
 import { connectJobs, registerNestedJobs, type EventBusLike } from "./background-jobs.ts";
 import type { ThemeLike } from "./theme-access.ts";
+import { registerEditorStyle } from "./editor-style.ts";
+import { registerCompactFooter } from "./compact-footer.ts";
 
 export { highlightBashCommand, formatBashCallHighlighted } from "./bash-highlight.ts";
 export { stripBackgroundFills, patchContainerBoxes, patchMessageBoxes, patchToolBoxFrames } from "./frame.ts";
@@ -195,6 +198,8 @@ export default function (pi: ExtensionAPI): void {
   tidyEnabled.set(config.enabled);
   agentRunning.set(false);
   if (!config.enabled) return;
+  registerEditorStyle(pi, config.editorStyle);
+  registerCompactFooter(pi, config.editorStyle);
 
   // The thinking row's "is this still arriving" cannot trust pi's private
   // `isStreaming` flag (it is not always settled), and a text-growth window

@@ -24,7 +24,7 @@ import { sliceByColumn } from "@earendil-works/pi-tui";
 import { fileIcon, PATH_ARG_TOOLS, toolKindIcon } from "./icons.ts";
 import { closeJobDetails, jobsForTool, setJobOptions } from "./background-jobs.ts";
 import { liveSlot, tidyEnabled } from "./live.ts";
-import { renderSplitDiff } from "./split-diff.ts";
+import { createSplitDiffRenderer, renderUnifiedDiff } from "./split-diff.ts";
 import { getTheme, type ThemeLike } from "./theme-access.ts";
 import { noteSetExpanded } from "./tool-groups.ts";
 import {
@@ -141,6 +141,13 @@ const toolOptions = liveSlot<ResolvedToolFrameOptions>("tool-frame-options", {
   thinkingColor: "warning",
 });
 
+// Weak ownership releases cached diff text/layout with the history component.
+// Keep one last layout per mode/owner, so alternating edits cannot thrash.
+const editDiffRenderers = new WeakMap<ToolBoxInternals, {
+  split: ReturnType<typeof createSplitDiffRenderer>;
+  unified: ReturnType<typeof createSplitDiffRenderer>;
+}>();
+
 const grouping = () => tidyEnabled.get() && toolOptions.get().groupTools;
 
 /** The component pi routes a box's clicks through (its result MouseRegions live inside). */
@@ -185,6 +192,12 @@ export function patchToolBoxFrames(options: ToolFrameOptions = {}): void {
   const anyProto = proto as unknown as Record<string, any>;
   const originalHandleMouse = anyProto.handleMouse;
   const originalSetExpanded = anyProto.setExpanded;
+  const originalInvalidate = anyProto.invalidate;
+  anyProto.invalidate = function (this: ToolBoxInternals, ...args: any[]) {
+    editDiffRenderers.delete(this);
+    this.__frameCache = undefined;
+    return originalInvalidate?.apply(this, args);
+  };
 
   setGroupingActive(grouping);
   setIconsEnabled(() => toolOptions.get().icons);
@@ -266,39 +279,46 @@ export function patchToolBoxFrames(options: ToolFrameOptions = {}): void {
  * Tools whose body is a diff worth splitting. pi's write box previews the new
  * file as highlighted source, not a diff, so it is not one of them.
  */
-const SPLIT_DIFF_TOOLS = new Set(["edit"]);
+const EDIT_DIFF_TOOLS = new Set(["edit"]);
 
 /**
- * Rebuild an edit box's rows as two panes.
+ * Rebuild an edit box's rows as a budgeted split or unified preview.
  *
  * pi's edit renderer keeps the unified diff string on its call component
  * (`preview.diff`) and renders it with `renderDiff`; the coloured lines are not
  * reversible, so the panes are built from that string instead. Undefined means
- * "keep what pi drew": no preview yet (streaming), a preview error, a narrow
- * box, or a diff that cannot be laid out.
+ * "keep what pi drew": no preview yet (streaming), an error, or an empty diff.
+ * Narrow/disabled splits use a unified body with the same expansion policy.
  */
-function splitEditBody(
+function editDiffBody(
   tool: ToolBoxInternals,
   innerWidth: number,
   callWidth: number,
   theme: ThemeLike,
 ): { raw: string[]; bgRows: ReadonlySet<number> } | undefined {
   const { splitDiff, splitDiffMinWidth, diffLines } = toolOptions.get();
-  if (!splitDiff || !SPLIT_DIFF_TOOLS.has(tool.toolName) || innerWidth < splitDiffMinWidth) return undefined;
+  if (!EDIT_DIFF_TOOLS.has(tool.toolName) || tool.result?.isError) return undefined;
   const component = tool.callRendererComponent;
   const preview = component?.preview;
   if (!preview || "error" in preview) return undefined;
   const diff = typeof preview.diff === "string" ? preview.diff : undefined;
   if (!diff) return undefined;
   const path = (tool.args as { path?: unknown } | undefined)?.path;
-  const body = renderSplitDiff({
+  let renderers = editDiffRenderers.get(tool);
+  if (!renderers) {
+    renderers = { split: createSplitDiffRenderer(), unified: createSplitDiffRenderer(renderUnifiedDiff) };
+    editDiffRenderers.set(tool, renderers);
+  }
+  const input = {
     diff,
     width: innerWidth,
     theme,
     filePath: typeof path === "string" ? path : undefined,
     // Collapsed, the body is a window on the diff; `ctrl+o` draws all of it.
     maxLines: tool.expanded ? undefined : diffLines,
-  });
+  };
+  const split = splitDiff && innerWidth >= splitDiffMinWidth ? renderers.split(input) : null;
+  const body = split ?? renderers.unified(input);
   if (!body) return undefined;
   // Row 0 is the call row (`edit ~/x.ts`), which keeps pi's rendering so the
   // icon prefix and path shortening still apply; the body starts with its own
@@ -340,7 +360,7 @@ function splitEditBody(
     }
     const iconCells = (kindPrefix ? visibleWidth(kindPrefix) : 0) + (fileGlyph ? visibleWidth(fileGlyph) + 1 : 0);
     const sourceWidth = w - 2 - iconCells;
-    const split = splitEditBody(this, w - 2, sourceWidth, theme);
+    const split = editDiffBody(this, w - 2, sourceWidth, theme);
     const raw = split ? split.raw : source.render(sourceWidth);
 
     // The whole returned array is cached, not just the framed body.
